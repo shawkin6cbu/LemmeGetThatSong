@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller
+build/
+dist/
+*.manifest
+
+# Onyx (user-supplied, GPLv3 — do not redistribute)
+onyx/
+squashfs-root/
+*.AppImage
+*_import/
+gen-*/
+
+# Charts / audio — never commit these
+*.con
+*.sng
+*.mogg
+*.rb3con
+*.zip
+*.rar
+*.7z
+
+# Local config
+taste.json
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Settings
+settings.json
