@@ -66,21 +66,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("yarg")
 
-# ── Windows DPI ─────────────────────────────────────────────────────────
-# CustomTkinter multiplies every widget dimension by the monitor's reported
-# DPI scale. Tk already applies the OS scaling factor, so the result is
-# scaled twice and the UI comes out oversized on any Windows display above
-# 100%. Turning CTk's layer off fixes it — but the DPI value is cached
-# inside the CTk window constructor, so this MUST run before any CTk window
-# is created. Calling it from App.__init__ (after super().__init__()) is too
-# late and has no effect. macOS scales correctly on its own; Linux is
-# handled per-window in App.__init__.
-if os.name == "nt":
-    try:
-        ctk.deactivate_automatic_dpi_awareness()
-        log.info("CTk automatic DPI awareness disabled (Windows)")
-    except Exception as e:
-        log.warning(f"Could not disable CTk DPI awareness: {e}")
+# UI size. 1.0 = correct size on every display regardless of OS DPI setting.
+# Persisted in settings.json; adjustable in-app. LGTS_UI_SCALE overrides.
+UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_STEP = 0.6, 2.0, 0.05
 
 # ── Font family ─────────────────────────────────────────────────────────
 # Resolved against Tk's own family list once the root window exists, since
@@ -826,15 +814,29 @@ class App(ctk.CTk):
         # macOS. Overriding it there double-scales the whole UI. Only Linux
         # (especially KDE/Wayland) misreports scaling to Tk, so correct it
         # there and leave the other platforms alone.
-        if os.name != "nt" and sys.platform != "darwin":
-            try:
-                dpi = self.winfo_fpixels("1i")
-                scale = max(1.0, min(dpi / 96.0, 2.0))
-                ctk.set_widget_scaling(scale)
-                ctk.set_window_scaling(scale)
-                log.info(f"Display DPI: {dpi:.0f}, UI scale: {scale:.2f}x")
-            except Exception as e:
-                log.warning(f"DPI detection failed: {e}")
+        # ── UI scaling ──────────────────────────────────────────────────
+        # CustomTkinter multiplies every dimension by the monitor's reported
+        # DPI factor, on top of the scaling Tk already applies. Dividing by
+        # that factor cancels it, leaving ui_scale as the only knob.
+        try:
+            from customtkinter.windows.widgets.scaling.scaling_tracker \
+                import ScalingTracker
+            self._dpi_factor = ScalingTracker.window_dpi_scaling_dict.get(self, 1.0)
+        except Exception:
+            self._dpi_factor = 1.0
+        if not self._dpi_factor or self._dpi_factor <= 0:
+            self._dpi_factor = 1.0
+
+        env = os.environ.get("LGTS_UI_SCALE")
+        saved = load_settings().get("ui_scale", 1.0)
+        try:
+            self.ui_scale = float(env) if env else float(saved)
+        except (TypeError, ValueError):
+            self.ui_scale = 1.0
+        self.ui_scale = max(UI_SCALE_MIN, min(self.ui_scale, UI_SCALE_MAX))
+
+        self._apply_ui_scale(self.ui_scale, persist=False)
+        log.info(f"DPI factor {self._dpi_factor:.2f}, UI scale {self.ui_scale:.2f}")
 
         self.title("LemmeGetThatSong")
         # Fit the screen rather than assuming one. 1400x900 overflows a
@@ -930,6 +932,11 @@ class App(ctk.CTk):
         ctk.CTkButton(path_frame, text="...", width=36, height=36,
                       fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
                       command=self._browse).pack(side="left")
+
+        ctk.CTkButton(path_frame, text="Settings", width=80, height=36,
+                      font=ctk.CTkFont(FONT, 14),
+                      fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
+                      command=self._open_settings).pack(side="left", padx=(8, 0))
 
         # ── Search Bar ──────────────────────────────────────────────────
         search_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -1377,6 +1384,108 @@ class App(ctk.CTk):
             self.after(500, self._watch_preview)
         else:
             self.preview_btn.configure(text="Preview (30s)")
+
+    def _apply_ui_scale(self, value: float, persist: bool = True):
+        """Set UI size. 1.0 is 'correct' regardless of the display's DPI."""
+        value = max(UI_SCALE_MIN, min(round(value, 2), UI_SCALE_MAX))
+        self.ui_scale = value
+        scale = value / self._dpi_factor
+        ctk.set_widget_scaling(scale)
+        ctk.set_window_scaling(scale)
+        if persist:
+            s = load_settings()
+            s["ui_scale"] = value
+            save_settings(s)
+        if hasattr(self, "_scale_readout") and self._scale_readout.winfo_exists():
+            self._scale_readout.configure(text=f"{int(value * 100)}%")
+
+    def _nudge_ui_scale(self, delta: float):
+        self._apply_ui_scale(self.ui_scale + delta)
+
+    def _open_settings(self):
+        if getattr(self, "_settings_win", None) and self._settings_win.winfo_exists():
+            self._settings_win.focus()
+            return
+
+        win = ctk.CTkToplevel(self)
+        self._settings_win = win
+        win.title("Settings")
+        win.configure(fg_color=BG)
+        win.transient(self)
+        win.resizable(False, False)
+
+        pad = ctk.CTkFrame(win, fg_color="transparent")
+        pad.pack(padx=24, pady=24, fill="both", expand=True)
+
+        ctk.CTkLabel(pad, text="Interface size",
+                     font=ctk.CTkFont(FONT, 17, "bold"),
+                     text_color=TEXT).pack(anchor="w")
+        ctk.CTkLabel(pad,
+                     text="100% is the intended size. Lower it if the app "
+                          "looks too large on your display.",
+                     font=ctk.CTkFont(FONT, 13), text_color=SUB,
+                     wraplength=320, justify="left").pack(anchor="w", pady=(2, 14))
+
+        row = ctk.CTkFrame(pad, fg_color="transparent")
+        row.pack(fill="x")
+
+        ctk.CTkButton(row, text="−", width=44, height=38,
+                      font=ctk.CTkFont(FONT, 20),
+                      fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
+                      command=lambda: self._nudge_ui_scale(-UI_SCALE_STEP)
+                      ).pack(side="left")
+
+        self._scale_readout = ctk.CTkLabel(
+            row, text=f"{int(self.ui_scale * 100)}%", width=90, height=38,
+            font=ctk.CTkFont(FONT, 18, "bold"), text_color=TEXT)
+        self._scale_readout.pack(side="left", padx=8)
+
+        ctk.CTkButton(row, text="+", width=44, height=38,
+                      font=ctk.CTkFont(FONT, 20),
+                      fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
+                      command=lambda: self._nudge_ui_scale(UI_SCALE_STEP)
+                      ).pack(side="left")
+
+        entry = ctk.CTkEntry(row, width=70, height=38,
+                             font=ctk.CTkFont(FONT, 15),
+                             fg_color=SURF0, border_color=SURF1,
+                             text_color=TEXT, placeholder_text="100")
+        entry.pack(side="left", padx=(16, 6))
+
+        def commit(_evt=None):
+            raw = entry.get().strip().rstrip("%")
+            try:
+                pct = float(raw)
+            except ValueError:
+                entry.delete(0, tk.END)
+                return
+            # Accept either 90 or 0.9.
+            self._apply_ui_scale(pct / 100 if pct > 3 else pct)
+            entry.delete(0, tk.END)
+
+        entry.bind("<Return>", commit)
+        ctk.CTkButton(row, text="Set", width=56, height=38,
+                      font=ctk.CTkFont(FONT, 14),
+                      fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
+                      command=commit).pack(side="left")
+
+        btns = ctk.CTkFrame(pad, fg_color="transparent")
+        btns.pack(fill="x", pady=(18, 0))
+        ctk.CTkButton(btns, text="Reset to 100%", height=36,
+                      font=ctk.CTkFont(FONT, 14),
+                      fg_color=SURF0, hover_color=SURF1, text_color=SUB,
+                      command=lambda: self._apply_ui_scale(1.0)).pack(side="left")
+        ctk.CTkButton(btns, text="Close", height=36, width=90,
+                      font=ctk.CTkFont(FONT, 14),
+                      fg_color=BLUE, hover_color=LAVENDER, text_color=BG,
+                      command=win.destroy).pack(side="right")
+
+        ctk.CTkLabel(pad,
+                     text=f"Display reports {int(self._dpi_factor * 100)}% DPI",
+                     font=ctk.CTkFont(FONT, 12),
+                     text_color=SUB).pack(anchor="w", pady=(14, 0))
+
+        win.after(120, win.lift)
 
     def _show_in_folder(self):
         path = self.songs_path.get()
