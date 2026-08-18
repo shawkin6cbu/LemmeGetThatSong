@@ -820,7 +820,16 @@ class App(ctk.CTk):
             except Exception as e:
                 log.warning(f"DPI detection failed: {e}")
         else:
-            log.info("Using platform DPI scaling")
+            # CustomTkinter's automatic DPI awareness over-scales on Windows,
+            # especially under a VM or on a high-DPI panel. Tk already handles
+            # the OS scaling factor, so turn CTk's layer off entirely.
+            try:
+                ctk.deactivate_automatic_dpi_awareness()
+            except Exception as e:
+                log.warning(f"Could not disable CTk DPI awareness: {e}")
+            ctk.set_widget_scaling(1.0)
+            ctk.set_window_scaling(1.0)
+            log.info("CTk DPI scaling disabled")
 
         self.title("LemmeGetThatSong")
         # Fit the screen rather than assuming one. 1400x900 overflows a
