@@ -1071,29 +1071,83 @@ class App(ctk.CTk):
         pad = ctk.CTkFrame(detail, fg_color="transparent")
         pad.pack(fill="both", expand=True, padx=16, pady=16)
 
-        self.art_label = tk.Label(pad, bg=BG2, width=280, height=300)
+        # Fixed footer + scrollable body.
+        #
+        # Tk's packer allocates space in call order, so anything packed last
+        # is silently clipped when the pane is shorter than its contents.
+        # Packing the action buttons with side="bottom" FIRST reserves their
+        # space up front, so they are always visible no matter how short the
+        # window is. The body then takes whatever is left and scrolls.
+        actions = ctk.CTkFrame(pad, fg_color="transparent")
+        actions.pack(side="bottom", fill="x", pady=(10, 0))
+
+        self.dl_btn = ctk.CTkButton(
+            actions, text="DOWNLOAD", height=50,
+            font=ctk.CTkFont(FONT, 20, "bold"), corner_radius=10,
+            fg_color=BLUE, hover_color=LAVENDER, text_color=CRUST,
+            command=self._queue_dl)
+        self.dl_btn.pack(fill="x", pady=(0, 6))
+
+        self.dl_progress = ctk.CTkProgressBar(actions, height=4,
+                                              fg_color=SURF0,
+                                              progress_color=GREEN,
+                                              corner_radius=2)
+        self.dl_progress.pack(fill="x", pady=(0, 8))
+        self.dl_progress.set(0)
+
+        ctk.CTkButton(actions, text="Open Source Page", height=40,
+                      font=ctk.CTkFont(FONT, 15), corner_radius=8,
+                      fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
+                      command=self._open_page).pack(fill="x")
+
+        if HAS_PREVIEW:
+            self.preview_btn = ctk.CTkButton(
+                actions, text="Preview (30s)", height=40,
+                font=ctk.CTkFont(FONT, 15), corner_radius=8,
+                fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
+                command=self._toggle_preview)
+            self.preview_btn.pack(fill="x", pady=(8, 0))
+
+        ctk.CTkButton(actions, text="Show in Folder", height=40,
+                      font=ctk.CTkFont(FONT, 15), corner_radius=8,
+                      fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
+                      command=self._show_in_folder).pack(fill="x", pady=(8, 0))
+
+        if HAS_MOGG_CHECK:
+            ctk.CTkButton(actions, text="Repair Library Audio", height=36,
+                          font=ctk.CTkFont(FONT, 14), corner_radius=8,
+                          fg_color=SURF0, hover_color=SURF1, text_color=SUB,
+                          command=self._repair_library).pack(fill="x", pady=(8, 0))
+
+        # Body — scrolls when the window is too short for the art + metadata.
+        body = ctk.CTkScrollableFrame(pad, fg_color="transparent",
+                                      scrollbar_button_color=SURF1,
+                                      scrollbar_button_hover_color=SURF2)
+        body.pack(side="top", fill="both", expand=True)
+
+        self.art_label = tk.Label(body, bg=BG2, width=280, height=300)
         self.art_label.pack(pady=(0, 14))
         self._set_art_placeholder()
 
-        self.d_title = ctk.CTkLabel(pad, text="Select a chart",
+        self.d_title = ctk.CTkLabel(body, text="Select a chart",
                                     font=ctk.CTkFont(FONT, 20, "bold"),
                                     text_color=TEXT, wraplength=300, anchor="w")
         self.d_title.pack(anchor="w", pady=(0, 2))
-        self.d_artist = ctk.CTkLabel(pad, text="", font=ctk.CTkFont(FONT, 16),
+        self.d_artist = ctk.CTkLabel(body, text="", font=ctk.CTkFont(FONT, 16),
                                      text_color=SUB, wraplength=300, anchor="w")
         self.d_artist.pack(anchor="w", pady=(0, 2))
-        self.d_album = ctk.CTkLabel(pad, text="", font=ctk.CTkFont(FONT, 15),
+        self.d_album = ctk.CTkLabel(body, text="", font=ctk.CTkFont(FONT, 15),
                                     text_color=OVERLAY0, wraplength=300, anchor="w")
         self.d_album.pack(anchor="w", pady=(0, 2))
-        self.d_charter = ctk.CTkLabel(pad, text="", font=ctk.CTkFont(FONT, 15),
+        self.d_charter = ctk.CTkLabel(body, text="", font=ctk.CTkFont(FONT, 15),
                                       text_color=OVERLAY0, wraplength=300, anchor="w")
         self.d_charter.pack(anchor="w", pady=(0, 2))
-        self.d_source = ctk.CTkLabel(pad, text="", font=ctk.CTkFont(FONT, 15),
+        self.d_source = ctk.CTkLabel(body, text="", font=ctk.CTkFont(FONT, 15),
                                      text_color=OVERLAY0, wraplength=300, anchor="w")
         self.d_source.pack(anchor="w", pady=(0, 14))
 
         # Difficulty bars
-        self.diff_frame = ctk.CTkFrame(pad, fg_color="transparent")
+        self.diff_frame = ctk.CTkFrame(body, fg_color="transparent")
         self.diff_frame.pack(fill="x", pady=(0, 6))
         self.diff_bars: dict[str, tuple[ctk.CTkLabel, ctk.CTkProgressBar, ctk.CTkLabel]] = {}
         for code, name in [("G", "Guitar"), ("B", "Bass"), ("D", "Drums"),
@@ -1101,7 +1155,7 @@ class App(ctk.CTk):
             row = ctk.CTkFrame(self.diff_frame, fg_color="transparent")
             row.pack(fill="x", pady=2)
             lbl = ctk.CTkLabel(row, text=f"{name}", width=55,
-                               font=ctk.CTkFont(FONT, 24),
+                               font=ctk.CTkFont(FONT, 15),
                                text_color=SUB, anchor="w")
             lbl.pack(side="left")
             bar = ctk.CTkProgressBar(row, width=110, height=10,
@@ -1115,48 +1169,10 @@ class App(ctk.CTk):
             val.pack(side="left")
             self.diff_bars[code] = (lbl, bar, val)
 
-        self.pro_badge = ctk.CTkLabel(pad, text="",
+        self.pro_badge = ctk.CTkLabel(body, text="",
                                       font=ctk.CTkFont(FONT, 16, "bold"),
                                       text_color=MAUVE)
         self.pro_badge.pack(anchor="w", pady=(4, 14))
-
-        self.dl_btn = ctk.CTkButton(
-            pad, text="DOWNLOAD", height=50,
-            font=ctk.CTkFont(FONT, 20, "bold"), corner_radius=10,
-            fg_color=BLUE, hover_color=LAVENDER, text_color=CRUST,
-            command=self._queue_dl)
-        self.dl_btn.pack(fill="x", pady=(0, 6))
-
-        self.dl_progress = ctk.CTkProgressBar(pad, height=4,
-                                               fg_color=SURF0, progress_color=GREEN,
-                                               corner_radius=2)
-        self.dl_progress.pack(fill="x", pady=(0, 8))
-        self.dl_progress.set(0)
-
-        ctk.CTkButton(pad, text="Open Source Page", height=40,
-                      font=ctk.CTkFont(FONT, 15), corner_radius=8,
-                      fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
-                      command=self._open_page).pack(fill="x")
-
-        if HAS_PREVIEW:
-            self.preview_btn = ctk.CTkButton(
-                pad, text="Preview (30s)", height=40,
-                font=ctk.CTkFont(FONT, 15), corner_radius=8,
-                fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
-                command=self._toggle_preview)
-            self.preview_btn.pack(fill="x", pady=(8, 0))
-
-        ctk.CTkButton(pad, text="Show in Folder", height=40,
-                      font=ctk.CTkFont(FONT, 15), corner_radius=8,
-                      fg_color=SURF0, hover_color=SURF1, text_color=TEXT,
-                      command=self._show_in_folder).pack(fill="x", pady=(8, 0))
-
-        if HAS_MOGG_CHECK:
-            ctk.CTkButton(pad, text="Repair Library Audio", height=36,
-                          font=ctk.CTkFont(FONT, 14), corner_radius=8,
-                          fg_color=SURF0, hover_color=SURF1, text_color=SUB,
-                          command=self._repair_library).pack(fill="x", pady=(8, 0))
-
     # ── Taste + Recommendation Rendering ────────────────────────────────
 
     def _chip_label(self, parent, text: str, color: str, padx):
