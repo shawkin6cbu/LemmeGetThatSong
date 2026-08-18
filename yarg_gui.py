@@ -66,6 +66,22 @@ logging.basicConfig(
 )
 log = logging.getLogger("yarg")
 
+# ── Windows DPI ─────────────────────────────────────────────────────────
+# CustomTkinter multiplies every widget dimension by the monitor's reported
+# DPI scale. Tk already applies the OS scaling factor, so the result is
+# scaled twice and the UI comes out oversized on any Windows display above
+# 100%. Turning CTk's layer off fixes it — but the DPI value is cached
+# inside the CTk window constructor, so this MUST run before any CTk window
+# is created. Calling it from App.__init__ (after super().__init__()) is too
+# late and has no effect. macOS scales correctly on its own; Linux is
+# handled per-window in App.__init__.
+if os.name == "nt":
+    try:
+        ctk.deactivate_automatic_dpi_awareness()
+        log.info("CTk automatic DPI awareness disabled (Windows)")
+    except Exception as e:
+        log.warning(f"Could not disable CTk DPI awareness: {e}")
+
 # ── Font family ─────────────────────────────────────────────────────────
 # Resolved against Tk's own family list once the root window exists, since
 # Tk is the only authority on what it can actually render. fc-list may name
@@ -819,17 +835,6 @@ class App(ctk.CTk):
                 log.info(f"Display DPI: {dpi:.0f}, UI scale: {scale:.2f}x")
             except Exception as e:
                 log.warning(f"DPI detection failed: {e}")
-        else:
-            # CustomTkinter's automatic DPI awareness over-scales on Windows,
-            # especially under a VM or on a high-DPI panel. Tk already handles
-            # the OS scaling factor, so turn CTk's layer off entirely.
-            try:
-                ctk.deactivate_automatic_dpi_awareness()
-            except Exception as e:
-                log.warning(f"Could not disable CTk DPI awareness: {e}")
-            ctk.set_widget_scaling(1.0)
-            ctk.set_window_scaling(1.0)
-            log.info("CTk DPI scaling disabled")
 
         self.title("LemmeGetThatSong")
         # Fit the screen rather than assuming one. 1400x900 overflows a
