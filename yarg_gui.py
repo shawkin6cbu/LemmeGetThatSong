@@ -806,22 +806,29 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("dark")
 
         # ── DPI scaling ─────────────────────────────────────────────────
-        # Linux (especially KDE/Wayland) often reports wrong scaling to Tk.
-        # Detect real DPI and force correct widget scaling.
-        try:
-            dpi = self.winfo_fpixels('1i')  # actual DPI
-            scale = dpi / 96.0
-            if scale < 1.0:
-                scale = 1.0
-            ctk.set_widget_scaling(scale)
-            ctk.set_window_scaling(scale)
-            log.info(f"Display DPI: {dpi:.0f}, UI scale: {scale:.2f}x")
-        except Exception:
-            pass
+        # CustomTkinter already applies DPI-aware scaling on Windows and
+        # macOS. Overriding it there double-scales the whole UI. Only Linux
+        # (especially KDE/Wayland) misreports scaling to Tk, so correct it
+        # there and leave the other platforms alone.
+        if os.name != "nt" and sys.platform != "darwin":
+            try:
+                dpi = self.winfo_fpixels("1i")
+                scale = max(1.0, min(dpi / 96.0, 2.0))
+                ctk.set_widget_scaling(scale)
+                ctk.set_window_scaling(scale)
+                log.info(f"Display DPI: {dpi:.0f}, UI scale: {scale:.2f}x")
+            except Exception as e:
+                log.warning(f"DPI detection failed: {e}")
+        else:
+            log.info("Using platform DPI scaling")
 
         self.title("LemmeGetThatSong")
-        self.geometry("1400x900")
-        self.minsize(1000, 650)
+        # Fit the screen rather than assuming one. 1400x900 overflows a
+        # 1366x768 laptop or a small VM display.
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h = min(1400, int(sw * 0.9)), min(900, int(sh * 0.9))
+        self.geometry(f"{w}x{h}")
+        self.minsize(min(1000, w), min(650, h))
         self.configure(fg_color=BG)
 
         self._results: list[dict] = []
@@ -1015,7 +1022,7 @@ class App(ctk.CTk):
             "st": ("", 40, 40, False),
             "artist": ("Artist", 260, 140, True),
             "title": ("Title", 380, 200, True),
-            "source": ("Source", 130, 130, False),
+            "source": ("Source", 110, 90, False),
             "charter": ("Charter", 180, 120, True),
             "G": ("G", 46, 46, False), "B": ("B", 46, 46, False),
             "D": ("D", 46, 46, False), "K": ("K", 46, 46, False),
