@@ -35,6 +35,18 @@ chmod +x LemmeGetThatSong-linux-x64
 **Windows** — run the `.exe`. SmartScreen will warn you because the binary is
 unsigned; "More info" then "Run anyway".
 
+**macOS (Apple Silicon)**
+
+```bash
+chmod +x LemmeGetThatSong-macos-arm64
+./LemmeGetThatSong-macos-arm64
+```
+
+Gatekeeper will block it on first launch because the binary is unsigned:
+right-click (or Control-click) it in Finder, choose "Open", then confirm in
+the dialog. After that it opens normally, including via double-click. Intel
+Macs aren't built — see "From source" below.
+
 ### From source
 
 ```bash
@@ -45,6 +57,9 @@ python yarg_gui.py
 ```
 
 Linux also needs Tk: `sudo apt install python3-tk`
+
+macOS needs Tk too if you're on Homebrew Python: `brew install python-tk`.
+Python installed from python.org already bundles it.
 
 ## Encrypted Rock Band audio (optional)
 

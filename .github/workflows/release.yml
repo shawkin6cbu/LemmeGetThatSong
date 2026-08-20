@@ -15,6 +15,8 @@ jobs:
             asset: LemmeGetThatSong-linux-x64
           - os: windows-latest
             asset: LemmeGetThatSong-windows-x64.exe
+          - os: macos-14
+            asset: LemmeGetThatSong-macos-arm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -38,6 +40,10 @@ jobs:
 
       - name: Rename (Linux)
         if: runner.os == 'Linux'
+        run: mv dist/LemmeGetThatSong dist/${{ matrix.asset }}
+
+      - name: Rename (macOS)
+        if: runner.os == 'macOS'
         run: mv dist/LemmeGetThatSong dist/${{ matrix.asset }}
 
       - name: Rename (Windows)
