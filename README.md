@@ -49,6 +49,10 @@ Macs aren't built — see "From source" below.
 
 ### From source
 
+Needs Python 3.10+ (the code uses `X | None` type hints). macOS's built-in
+`/usr/bin/python3` (Xcode Command Line Tools) is 3.9 and too old — install a
+newer one via `brew install python@3.12` or from python.org first.
+
 ```bash
 git clone https://github.com/YOURNAME/LemmeGetThatSong
 cd LemmeGetThatSong
