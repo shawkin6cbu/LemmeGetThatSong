@@ -33,7 +33,7 @@ import logging
 import math
 import time
 import webbrowser
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -196,8 +196,41 @@ def detect_type(data: bytes) -> str:
         return ".html"
     return ""
 
+def open_external(url: str) -> bool:
+    """
+    Open a URL in the browser, http(s) only.
+
+    page_url and download links come from third-party APIs. Handing an
+    unchecked string to webbrowser.open() lets a hostile or compromised
+    response pick the scheme — file://, and on Windows schemes that hand
+    off to arbitrary registered handlers.
+    """
+    try:
+        parts = urlparse(url)
+    except Exception:
+        return False
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        log.warning(f"Refusing to open non-http(s) URL: {url[:120]!r}")
+        return False
+    webbrowser.open(url)
+    return True
+
+
 def safe_name(t: str) -> str:
-    return re.sub(r'[^a-zA-Z0-9\s\-\(\)\[\]&!,\']', '', t).strip()
+    """
+    Filesystem-safe name. Strips path separators and anything exotic.
+
+    Non-Latin titles (Japanese, Cyrillic, etc.) would otherwise strip to an
+    empty string, so every such chart would collide on one folder — and the
+    download path calls shutil.rmtree() on it first, deleting the previous
+    one. Fall back to a hash so each chart keeps its own directory.
+    """
+    cleaned = re.sub(r"[^a-zA-Z0-9\s\-\(\)\[\]&!,\']", "", t).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if not cleaned and t.strip():
+        import hashlib
+        cleaned = hashlib.sha1(t.strip().encode("utf-8")).hexdigest()[:10]
+    return cleaned
 
 def fix_url(url: str, base: str = "") -> str:
     if not url: return ""
@@ -216,9 +249,6 @@ def pdiff(val) -> int:
 
 def diff_str(v: int) -> str:
     return "·" if v < 0 else str(v)
-
-# Legacy default, still probed by find_songs_path() on Linux.
-SONGS_PATH = "/mnt/ml-data/yarg-songs"
 
 CONFIG_DIR = os.path.expanduser("~/.config/LemmeGetThatSong")
 SETTINGS_FILE = os.path.join(CONFIG_DIR, "settings.json")
@@ -259,111 +289,35 @@ def yarg_config_dirs() -> list[str]:
 
 def detect_yarg_songs_path() -> str | None:
     """
-    Read YARG's own settings to find where it actually loads songs from.
+    Read YARG's own config to find where it loads songs from.
 
-    YARG keeps config under Unity's persistentDataPath. The layout varies by
-    version and release channel, so rather than depend on a filename or key,
-    collect every string that resolves to an existing directory from:
-      * any .json anywhere under the config dir (recursive)
-      * the Unity `prefs` PlayerPrefs file (XML, sometimes base64 values)
-    then pick whichever looks like an actual song library.
+    YARG stores this as a "SongFolders" list in settings.json under its Unity
+    persistentDataPath. Deliberately targeted: read one known key from one
+    known file. Earlier versions walked the whole config tree, regex-scraped
+    anything path-shaped out of the binary prefs blob, and base64-decoded
+    arbitrary strings looking for more — a lot of parsing against untrusted
+    input to find something that lives at a fixed location.
     """
-    found: list[str] = []
-
-    def harvest(node):
-        if isinstance(node, str):
-            if len(node) > 3 and os.path.isdir(node):
-                found.append(node)
-        elif isinstance(node, dict):
-            for v in node.values():
-                harvest(v)
-        elif isinstance(node, list):
-            for v in node:
-                harvest(v)
-
-    def scan_prefs(path: str):
-        try:
-            raw = open(path, "rb").read().decode("utf-8", "replace")
-        except OSError:
-            return
-        # Unity prefs is XML: <pref name="..." type="string">value</pref>.
-        # Some builds base64 the payload, so try both.
-        for m in re.finditer(r">([^<>]{4,})<", raw):
-            val = m.group(1).strip()
-            for cand in (val, _maybe_b64(val)):
-                if cand and os.path.isdir(cand):
-                    found.append(cand)
-        # Last resort: any absolute-looking path in the blob.
-        for m in re.finditer(r"(?:[A-Za-z]:\\[^\"<>|*?\n]{3,}|/[^\"<>|*?\n:]{3,})",
-                             raw):
-            p = m.group(0).strip()
-            if os.path.isdir(p):
-                found.append(p)
-
-    def _maybe_b64(s: str) -> str | None:
-        try:
-            import base64
-            d = base64.b64decode(s, validate=True).decode("utf-8", "ignore")
-            return d if d.strip() else None
-        except Exception:
-            return None
-
-    for d in yarg_config_dirs():
-        if not os.path.isdir(d):
-            continue
-        for root, dirs, names in os.walk(d):
-            dirs[:] = [x for x in dirs if x.lower() not in ("cache", "logs")]
-            for name in names:
-                fp = os.path.join(root, name)
-                low = name.lower()
-                if low.endswith(".json"):
-                    try:
-                        with open(fp, errors="replace") as f:
-                            harvest(json.load(f))
-                    except Exception:
-                        continue
-                elif low == "prefs" or low.endswith(".prefs"):
-                    scan_prefs(fp)
-
-    if not found:
-        return None
-
-    def looks_like_songs(p: str) -> bool:
-        try:
-            entries = os.listdir(p)[:200]
-        except OSError:
-            return False
-        if any(e.lower().endswith((".sng", ".con", ".rb3con")) for e in entries):
-            return True
-        for e in entries[:40]:
-            sub = os.path.join(p, e)
-            if os.path.isdir(sub):
-                try:
-                    if any(x.lower() in ("song.ini", "notes.chart", "notes.mid",
-                                         "songs.dta")
-                           for x in os.listdir(sub)[:50]):
-                        return True
-                except OSError:
-                    pass
-        return False
-
-    # De-dupe, keep order.
-    seen, ordered = set(), []
-    for p in found:
-        rp = os.path.realpath(p)
-        if rp not in seen:
-            seen.add(rp)
-            ordered.append(p)
-
-    for p in ordered:
-        if looks_like_songs(p):
-            log.info(f"Detected YARG songs folder: {p}")
-            return p
-
-    for p in ordered:
-        if "song" in os.path.basename(p).lower():
-            log.info(f"Guessed YARG songs folder by name: {p}")
-            return p
+    for base in yarg_config_dirs():
+        for rel in ("release/settings.json", "settings.json",
+                    "nightly/settings.json"):
+            path = os.path.join(base, *rel.split("/"))
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    cfg = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if not isinstance(cfg, dict):
+                continue
+            folders = cfg.get("SongFolders")
+            if not isinstance(folders, list):
+                continue
+            for entry in folders:
+                if isinstance(entry, str) and os.path.isdir(entry):
+                    log.info("Detected YARG songs folder from its settings")
+                    return entry
     return None
 
 
@@ -395,7 +349,6 @@ def find_songs_path() -> str:
         candidates += [
             os.path.join(home, "YARG", "Songs"),
             os.path.join(home, "Music", "YARG"),
-            "/mnt/ml-data/yarg-songs",
         ]
         default = os.path.join(home, "YARG", "Songs")
 
@@ -1389,7 +1342,7 @@ class App(ctk.CTk):
                             "Cannot play this preview in-app "
                             "(install pygame for built-in playback).\n\n"
                             "Open it in your browser?"):
-                        webbrowser.open(p.url)
+                        open_external(p.url)
             self.after(0, done)
 
         threading.Thread(target=work, daemon=True).start()
@@ -1568,7 +1521,7 @@ class App(ctk.CTk):
             return
         url = c.get("page_url", "")
         if url:
-            webbrowser.open(url)
+            open_external(url)
 
     # ── Search ──────────────────────────────────────────────────────────
 
@@ -1894,7 +1847,7 @@ class App(ctk.CTk):
             if page and messagebox.askyesno(
                     "No Direct Link",
                     "No direct download link.\nOpen source page in browser?"):
-                webbrowser.open(page)
+                open_external(page)
             elif not page:
                 messagebox.showerror("No link", "No download link available.")
             return
@@ -2045,6 +1998,9 @@ class App(ctk.CTk):
                 items = [i for i in os.listdir(tmp)
                          if i not in ('__MACOSX', '.DS_Store')]
                 dest = os.path.join(sd, fn)
+                # Never rmtree the songs folder itself, however fn degrades.
+                if os.path.abspath(dest) == os.path.abspath(sd):
+                    raise Exception("Could not derive a safe folder name.")
                 if os.path.exists(dest):
                     shutil.rmtree(dest)
                 if len(items) == 1 and os.path.isdir(os.path.join(tmp, items[0])):

@@ -35,13 +35,15 @@ class MoggCryptError(RuntimeError):
     pass
 
 
+# Directories searched for the Onyx binary. Deliberately narrow: this list
+# feeds subprocess execution, so anywhere a drive-by download or an extracted
+# archive could drop a file named "onyx" must NOT be here. That rules out
+# ~/Downloads and similar. Users outside these paths set ONYX_BIN explicitly
+# or point the app at the binary once, which is stored in CONFIG_PATH.
 SEARCH_DIRS = [
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "onyx"),
     os.path.expanduser("~/.local/share/LemmeGetThatSong/onyx"),
     os.path.expanduser("~/.config/LemmeGetThatSong/onyx"),
-    os.path.expanduser("~/Downloads/squashfs-root/usr/bin"),
-    "/opt/onyx",
-    "/usr/local/bin",
 ]
 
 CONFIG_PATH = os.path.expanduser("~/.config/LemmeGetThatSong/onyx_path")

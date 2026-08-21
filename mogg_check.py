@@ -19,10 +19,13 @@ problem instead of fixing it.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import struct
 from dataclasses import dataclass
+
+log = logging.getLogger("yarg.mogg")
 
 PLAIN_MOGG = 0x0A
 
@@ -147,9 +150,40 @@ class Stfs:
     def read(self, e: StfsEntry) -> bytes:
         return self._read_chain(e.start, e.blocks)[:e.size]
 
+    @staticmethod
+    def _safe_join(dest: str, entry_path: str) -> str | None:
+        """
+        Resolve an entry path inside `dest`, or None if it escapes.
+
+        File names in an STFS package are attacker-controlled bytes. Without
+        this, an entry named "../../../.ssh/authorized_keys" or an absolute
+        path writes anywhere the process can reach.
+        """
+        parts = []
+        for raw in entry_path.replace("\\", "/").split("/"):
+            part = raw.strip().strip(".")
+            if not part or raw in (".", ".."):
+                continue
+            # Drop drive letters and any residual separators.
+            part = part.split(":")[-1].replace("/", "").replace("\\", "")
+            if part:
+                parts.append(part)
+        if not parts:
+            return None
+
+        out = os.path.normpath(os.path.join(dest, *parts))
+        root = os.path.abspath(dest)
+        if os.path.commonpath([root, os.path.abspath(out)]) != root:
+            return None
+        return out
+
     def extract_all(self, dest: str) -> None:
+        os.makedirs(dest, exist_ok=True)
         for e in self.files():
-            out = os.path.join(dest, e.path)
+            out = self._safe_join(dest, e.path)
+            if out is None:
+                log.warning(f"Skipping unsafe STFS entry: {e.path!r}")
+                continue
             if e.is_dir:
                 os.makedirs(out, exist_ok=True)
             else:
